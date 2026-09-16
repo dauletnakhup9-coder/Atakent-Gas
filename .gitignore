@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.local
+*.env
+!*.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.next-start.log
+
+# Uploads / data
+apps/backend/data/
+data/uploads/
+*.db
+*.db-journal
+
+# Local dev process logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
