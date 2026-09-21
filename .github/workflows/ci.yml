@@ -1,0 +1,66 @@
+name: Verify
+on: [push, pull_request]
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          {
+            POSTGRES_USER: utility,
+            POSTGRES_PASSWORD: test_password,
+            POSTGRES_DB: utility_e2e,
+          }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U utility" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      ENVIRONMENT: test
+      COOKIE_SECURE: "false"
+      ALLOWED_ORIGINS: http://127.0.0.1:3000
+      BOT_API_KEY: ci-only-service-key-000000000000000000000000
+      DATABASE_URL: postgresql+asyncpg://utility:test_password@127.0.0.1:5432/utility_e2e
+      TEST_DATABASE_URL: postgresql+asyncpg://utility:test_password@127.0.0.1:5432/utility_e2e
+      REDIS_URL: redis://127.0.0.1:6379/0
+      TEST_REDIS_URL: redis://127.0.0.1:6379/2
+      UPLOAD_DIR: /tmp/utility-uploads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with:
+          {
+            node-version: "24",
+            cache: npm,
+            cache-dependency-path: apps/admin-web/package-lock.json,
+          }
+      - run: pip install -r requirements-dev.lock
+      - run: ruff check apps tests scripts
+      - run: pytest -q
+      - name: Apply and validate migrations
+        working-directory: apps/backend
+        run: |
+          alembic upgrade head
+          alembic check
+      - run: PYTHONPATH=apps/backend python tests/bootstrap_e2e.py
+      - run: npm ci
+        working-directory: apps/admin-web
+      - run: npm run build
+        working-directory: apps/admin-web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/admin-web
+      - name: Start services
+        run: |
+          PYTHONPATH=apps/backend uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+          cd apps/admin-web
+          npm start > /tmp/frontend.log 2>&1 &
+          for i in $(seq 1 30); do curl --fail http://127.0.0.1:3000/login && break; sleep 2; done
+      - run: npm run test:e2e
+        working-directory: apps/admin-web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: playwright-results, path: "apps/admin-web/test-results" }

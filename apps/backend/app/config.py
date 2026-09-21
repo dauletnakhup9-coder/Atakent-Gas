@@ -1,48 +1,34 @@
 from functools import lru_cache
+from pathlib import Path
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    # Core
-    ENVIRONMENT: str = "development"
-    SECRET_KEY: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8
-    ALGORITHM: str = "HS256"
-
-    # Database
-    DATABASE_URL: str
-
-    # Redis
-    REDIS_URL: str = "redis://redis:6379/0"
-
-    # CORS
-    CORS_ORIGINS: str = "http://localhost:3000"
-
-    # Internal auth (bot -> backend)
-    BOT_INTERNAL_API_KEY: str
-
-    # File uploads
-    UPLOAD_DIR: str = "/data/uploads"
-    MAX_UPLOAD_SIZE_MB: int = 10
-    ALLOWED_IMAGE_MIME_TYPES: str = "image/jpeg,image/png,image/webp"
-
-    # Telegram bot (used by backend to push notifications)
-    BOT_TOKEN: str = ""
-    TELEGRAM_API_BASE: str = "https://api.telegram.org"
-
-    # Rate limiting
-    RATE_LIMIT_DEFAULT: str = "100/minute"
-    RATE_LIMIT_LOGIN: str = "5/minute"
+    database_url: str
+    redis_url: str = "redis://redis:6379/0"
+    bot_token: str = ""
+    bot_api_key: str = Field(min_length=32)
+    allowed_origins: str = "https://localhost"
+    cookie_secure: bool = True
+    environment: str = "production"
+    upload_dir: Path = Path("/data/uploads")
+    max_photo_bytes: int = 10 * 1024 * 1024
+    session_hours: int = 8
+    timezone: str = "Asia/Qyzylorda"
 
     @property
-    def cors_origins_list(self) -> list[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+    def origins(self) -> list[str]:
+        return [origin.strip().rstrip("/") for origin in self.allowed_origins.split(",")]
 
-    @property
-    def allowed_mime_list(self) -> list[str]:
-        return [m.strip() for m in self.ALLOWED_IMAGE_MIME_TYPES.split(",") if m.strip()]
+    @model_validator(mode="after")
+    def production_security(self):
+        if self.environment == "production" and (
+            not self.cookie_secure or any(not x.startswith("https://") for x in self.origins)
+        ):
+            raise ValueError("Production requires HTTPS origins and secure cookies")
+        return self
 
 
 @lru_cache

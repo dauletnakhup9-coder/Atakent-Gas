@@ -1,18 +1,11 @@
-from functools import lru_cache
-
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    BOT_TOKEN: str
-    BACKEND_API_BASE_URL: str = "http://backend:8000/api"
-    BOT_INTERNAL_API_KEY: str
-    REDIS_URL: str = "redis://redis:6379/1"
-    USE_REDIS_FSM_STORAGE: bool = True
-
-
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+    bot_token: str
+    bot_api_key: str = Field(min_length=32)
+    backend_url: str = "http://backend:8000/api/internal"
+    redis_url: str = "redis://redis:6379/1"
+    timezone: str = "Asia/Qyzylorda"

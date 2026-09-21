@@ -1,10 +1,11 @@
-# packages/shared
+# API contract
 
-Reserved for code genuinely shared across apps (e.g. a generated OpenAPI TypeScript client for
-`apps/admin-web`, or a JSON schema both the bot and the dashboard validate against).
+The backend Pydantic schemas are the source of truth. `openapi.json` is generated from the implemented API. TypeScript view types live in `apps/admin-web/src/types/index.ts`. Bot speaks JSON through the internal API; it does not import backend code or access PostgreSQL.
 
-Currently the three apps intentionally stay decoupled and only share a contract, not code:
-the backend's OpenAPI schema at `/api/openapi.json` is the source of truth for request/response
-shapes, mirrored by hand in `apps/admin-web/lib/types.ts` and the Pydantic models the bot's
-`api_client.py` sends/receives. If that duplication becomes painful, generate a typed client
-into this package with a tool such as `openapi-typescript` and import it from `admin-web`.
+Regenerate the OpenAPI contract from the repository root:
+
+```sh
+PYTHONPATH=apps/backend python scripts/export_openapi.py
+```
+
+Requires backend environment variables. This script never connects to a database.

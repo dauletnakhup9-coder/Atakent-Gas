@@ -1,93 +1,275 @@
+name: utility-desk
+
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+  REDIS_URL: ${REDIS_URL:?Set REDIS_URL}
+  BOT_API_KEY: ${BOT_API_KEY:?Set BOT_API_KEY}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  UPLOAD_DIR: /data/uploads
+  TIMEZONE: Asia/Qyzylorda
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17.9-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-gas_service}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-gas_service}
+      POSTGRES_USER: ${POSTGRES_USER:-utility}
+      POSTGRES_DB: ${POSTGRES_DB:-utility}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gas_service}"]
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
+        ]
       interval: 5s
       timeout: 5s
-      retries: 10
-    networks: [internal]
+      retries: 15
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.8-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"',
+      ]
     volumes:
       - redis_data:/data
+    networks:
+      - data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG',
+        ]
       interval: 5s
-      timeout: 5s
-      retries: 10
-    networks: [internal]
+      timeout: 3s
+      retries: 15
 
-  backend:
+  migrate:
     build:
-      context: ./apps/backend
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gas_service}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gas_service}
-      REDIS_URL: redis://redis:6379/0
-      UPLOAD_DIR: /data/uploads
-    volumes:
-      - uploads_data:/data/uploads
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    command:
+      - alembic
+      - upgrade
+      - head
+    environment: *backend-env
+    networks:
+      - data
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - data
+      - app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    networks: [internal]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - data
+      - app
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    networks:
+      - data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://nginx:8080/stub_status
+    networks:
+      - app
+    depends_on:
+      - nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - app.notifications
+    environment:
+      <<: *backend-env
+      BOT_TOKEN: ${BOT_TOKEN:?Set BOT_TOKEN}
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - data
+      - app
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  security-monitor:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - app.security_monitor
+    environment: *backend-env
+    networks:
+      - data
+      - app
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   bot:
     build:
-      context: ./apps/telegram-bot
+      context: .
+      dockerfile: docker/bot.Dockerfile
     restart: unless-stopped
-    env_file: .env
     environment:
-      BACKEND_API_BASE_URL: http://backend:8000/api
-      REDIS_URL: redis://redis:6379/1
+      BOT_TOKEN: ${BOT_TOKEN:?Set BOT_TOKEN}
+      BOT_API_KEY: ${BOT_API_KEY:?Set BOT_API_KEY}
+      REDIS_URL: ${BOT_REDIS_URL:?Set BOT_REDIS_URL}
+      BACKEND_URL: http://backend:8000/api/internal
+      TIMEZONE: Asia/Qyzylorda
+    networks:
+      - data
+      - app
     depends_on:
-      - backend
-    networks: [internal]
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   frontend:
     build:
-      context: ./apps/admin-web
-      args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api}
+      context: .
+      dockerfile: docker/frontend.Dockerfile
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api}
+    networks:
+      - app
     depends_on:
-      - backend
-    networks: [internal]
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.28-alpine
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./docker/nginx/certs:/etc/nginx/certs:ro
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      - app
     depends_on:
-      - backend
-      - frontend
-    networks: [internal]
-
-networks:
-  internal:
-    driver: bridge
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
-  uploads_data:
+  uploads:
+  prometheus_data:
+
+networks:
+  data:
+    internal: true
+  app:

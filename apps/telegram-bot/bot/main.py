@@ -1,58 +1,42 @@
 import asyncio
 import logging
-
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
-
-from bot.config import get_settings
-from bot.handlers import (
-    application_type,
-    contact,
-    gas_leak_flow,
-    meter_flow,
-    mpi_flow,
-    my_applications,
-    navigation,
-    start,
-)
-from bot.middlewares.throttling import ThrottlingMiddleware
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("bot")
+from aiogram.types import BotCommand
+from bot.config import Settings
+from bot.handlers import router
+from bot.middlewares import Guard
+from bot.services import Backend
 
 
-def build_storage():
-    settings = get_settings()
-    if settings.USE_REDIS_FSM_STORAGE:
+async def main():
+    config = Settings()
+    logging.basicConfig(level=logging.INFO)
+    storage = RedisStorage.from_url(config.redis_url, state_ttl=86400, data_ttl=86400)
+    dispatcher = Dispatcher(storage=storage, events_isolation=storage.create_isolation(lock_kwargs={"timeout": 120}))
+    guard = Guard(storage.redis)
+    router.message.outer_middleware(guard)
+    router.callback_query.outer_middleware(guard)
+    dispatcher.include_router(router)
+    backend = Backend(config.backend_url, config.bot_api_key)
+    async with Bot(config.bot_token) as bot:
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Өтінім қалдыру"),
+                BotCommand(command="applications", description="Менің өтінімдерім"),
+                BotCommand(command="contact", description="Байланыс"),
+                BotCommand(command="menu", description="Басты мәзір"),
+                BotCommand(command="cancel", description="Бас тарту"),
+            ]
+        )
+        await bot.delete_webhook(drop_pending_updates=False)
         try:
-            return RedisStorage.from_url(settings.REDIS_URL)
-        except Exception:
-            logger.exception("Failed to connect to Redis, falling back to in-memory FSM storage")
-    return MemoryStorage()
-
-
-async def main() -> None:
-    settings = get_settings()
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(storage=build_storage())
-
-    dp.message.middleware(ThrottlingMiddleware())
-
-    # Order matters: navigation (global cancel) must be checked before flow-specific routers.
-    dp.include_router(navigation.router)
-    dp.include_router(start.router)
-    dp.include_router(application_type.router)
-    dp.include_router(meter_flow.router)
-    dp.include_router(mpi_flow.router)
-    dp.include_router(gas_leak_flow.router)
-    dp.include_router(my_applications.router)
-    dp.include_router(contact.router)
-
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+            await dispatcher.start_polling(
+                bot, backend=backend, timezone=config.timezone, allowed_updates=["message", "callback_query"]
+            )
+        finally:
+            await backend.client.aclose()
+            await storage.close()
 
 
 if __name__ == "__main__":

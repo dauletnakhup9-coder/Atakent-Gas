@@ -1,216 +1,183 @@
-# Газ қызметі — Өтінімдерді басқару жүйесі
+# Utility Desk · Qala Gas
 
-Production-ready system for accepting resident requests via a Telegram bot (Kazakh-language
-UI) and processing them by staff through a web admin dashboard. Monorepo with a FastAPI
-backend, an aiogram 3 Telegram bot, and a Next.js admin panel, all backed by one PostgreSQL
-database.
+Монорепозиторий для приёма заявок жителей в Telegram и обработки в веб-панели. Интерфейс преимущественно на казахском. **Production не содержит демонстрационных заявок и стандартных учётных записей.** Первый администратор создаётся отдельно.
 
-## Architecture
+## Что реализовано
 
-```
-Resident → Telegram Bot → Backend API → PostgreSQL → Admin Dashboard → Operator
-                              │                              ▲
-                              └────────── WebSocket / Redis ─┘  (real-time updates)
-```
+- FastAPI, SQLAlchemy 2, PostgreSQL, Alembic: центральная БД и API.
+- aiogram 3: подтверждение лицевого счёта, три полных FSM-сценария, календарь МПИ, фото, геолокация, предпросмотр, назад/отмена, список своих заявок.
+- Next.js 16, React 19, TypeScript, Tailwind 4, компоненты shadcn/ui на Radix: Dashboard, фильтры/поиск/сортировка/pagination, карточка с lightbox и Leaflet-картой, статусы, назначения, комментарии, сотрудники, отчёты, настройки.
+- Авторизация через серверную сессию, Argon2id, HttpOnly/Secure cookie, CSRF, RBAC, Redis rate limiting, audit log.
+- CRITICAL для утечки, SSE обновления, транзакционный outbox и повторная доставка Telegram.
+- Excel/CSV с теми же фильтрами и ограничениями доступа, защита от формул в экспорте.
+- Docker Compose: PostgreSQL, Redis, backend, bot, frontend, Nginx; дополнительные одноразовый `migrate` и фоновый `worker`.
 
-- **apps/backend** — FastAPI + SQLAlchemy 2 (async) + Alembic + JWT auth + RBAC + rate
-  limiting + WebSocket broadcast + Telegram notifications.
-- **apps/telegram-bot** — aiogram 3 bot, Kazakh-language FSM flows, talks to the backend
-  over a small internal API (`/api/bot/*`) authenticated with a shared secret.
-- **apps/admin-web** — Next.js (App Router) + TypeScript + Tailwind CSS, shadcn/ui-style
-  components, live updates over WebSocket, Leaflet map, photo lightbox, CSV/Excel reports.
-- **docker/nginx** — reverse proxy in front of the dashboard and API (single origin, so the
-  browser only ever talks to one host).
+Подробности: [архитектура](docs/architecture.md), [эксплуатация](docs/operations.md), [проверки](docs/verification.md), [контракт API](packages/shared/openapi.json).
 
-Both the bot and the dashboard share one backend/database — there is no duplicated state and
-no mock data.
+## 1. Установка
 
-## 1. Prerequisites
+Для сервера: Linux, Docker Engine и Docker Compose v2. Практический стартовый размер — 2 CPU / 4 ГБ RAM, SSD; ёмкость диска зависит от числа фотографий. Открыты наружу только TCP 80 и 443. PostgreSQL, Redis и API не публикуют host ports.
 
-- Docker and Docker Compose v2
-- A Telegram account (to create the bot)
-- (For local, non-Docker development only) Python 3.12+, Node.js 20+, PostgreSQL 16, Redis 7
+Распакуйте проект и перейдите в его корень:
 
-## 2. Creating the Telegram Bot via BotFather
-
-1. Open Telegram and start a chat with **@BotFather**.
-2. Send `/newbot` and follow the prompts (choose a name and a unique username ending in `bot`).
-3. BotFather replies with an API token that looks like `123456789:AAExampleTokenValue`.
-   This is your `BOT_TOKEN`.
-4. Optional but recommended: send `/setcommands` to BotFather and register:
-   ```
-   start - Жаңа өтінім / басты мәзір
-   ```
-
-## 3. Configure environment variables
-
-```bash
+```sh
+cd utility-desk
 cp .env.example .env
 ```
 
-Edit `.env` and fill in, at minimum:
+В Windows для локальной разработки используйте Docker Desktop с Linux containers / WSL2. Production Compose рассчитан на Linux containers.
 
-| Variable | Description |
+## 2. Создание Telegram-бота
+
+1. Откройте официальный **@BotFather** в Telegram.
+2. Выполните `/newbot`, задайте название и уникальный username.
+3. Сохраните выданный токен в `.env` как `BOT_TOKEN`.
+4. Не публикуйте токен. При раскрытии перевыпустите его в BotFather.
+
+Бот использует long polling, сам регистрирует команды и снимает старый webhook без удаления pending updates. Для одного BOT_TOKEN запускайте **ровно один экземпляр bot**. Жители работают в личном чате с ботом. Автоматическая отправка фотографий должна оставаться недоступной в группах.
+
+## 3. Конфигурация `.env`
+
+Сгенерируйте **три независимых** секрета — для PostgreSQL, Redis и service API:
+
+```sh
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Повторите команду для каждого секрета. Заполните:
+
+| Переменная | Назначение |
 |---|---|
-| `POSTGRES_PASSWORD` | Strong password for the PostgreSQL user |
-| `SECRET_KEY` | Random secret used to sign admin JWTs — generate with `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `BOT_INTERNAL_API_KEY` | Random shared secret between the bot and backend (same command as above) |
-| `BOT_TOKEN` | The token from BotFather (step 2) |
-| `CORS_ORIGINS` | Origins allowed to call the API from a browser (e.g. your dashboard domain) |
+| `POSTGRES_PASSWORD` | пароль роли БД |
+| `DATABASE_URL` | `postgresql+asyncpg://utility:ПАРОЛЬ@postgres:5432/utility` |
+| `REDIS_PASSWORD` | пароль Redis |
+| `REDIS_URL` | `redis://:ПАРОЛЬ@redis:6379/0` |
+| `BOT_REDIS_URL` | `redis://:ПАРОЛЬ@redis:6379/1` |
+| `BOT_API_KEY` | случайный секрет не короче 32 символов |
+| `BOT_TOKEN` | токен BotFather |
+| `ALLOWED_ORIGINS` | точный origin панели: `https://ваш-домен.kz`, без пути |
+| `ENVIRONMENT` | `production` |
+| `COOKIE_SECURE` | `true` |
 
-`DATABASE_URL` is assembled automatically by `docker-compose.yml` from the `POSTGRES_*`
-variables — you don't need to set it yourself when running via Docker.
+Пароли в URL должны быть URL-encoded; генерируемые hex-значения не требуют кодирования. `POSTGRES_PASSWORD` и пароль в `DATABASE_URL` должны совпадать. Аналогично для Redis. `.env` находится в `.gitignore` и `.dockerignore`.
 
-## 4. Running database migrations
+Не храните пользовательские контакты или аварийный номер в исходном коде. Они задаются в панели после подтверждения организацией.
 
-Migrations run automatically on backend container startup (see `apps/backend/Dockerfile`'s
-`CMD`). To run them manually against a running stack:
+## 4. Сборка и миграции
 
-```bash
-docker compose run --rm backend alembic upgrade head
+```sh
+docker compose config --quiet
+docker compose build
+docker compose up -d postgres redis
+docker compose run --rm migrate
 ```
 
-For local (non-Docker) development:
+Миграция создаёт таблицы, индексы и одну строку настроек с пустыми контактными номерами. Она **не создаёт** администратора или заявки. Схема не создаётся автоматически через `create_all` при старте production API.
 
-```bash
-cd apps/backend
-python -m venv .venv && .venv/Scripts/activate   # or `source .venv/bin/activate` on Linux/Mac
-pip install -r requirements.txt
-cp .env.example .env   # then edit DATABASE_URL to point at your local Postgres
-alembic upgrade head
+Проверка соответствия схемы:
+
+```sh
+docker compose run --rm --no-deps backend alembic check
 ```
 
-## 5. Creating the first SUPER_ADMIN
+## 5. Первый SUPER_ADMIN
 
-Once the database is migrated:
-
-```bash
-docker compose run --rm backend python create_super_admin.py \
-  --email admin@example.com --password "a-strong-password" --name "Admin"
+```sh
+docker compose run --rm --no-deps backend python -m app.cli --email admin@your-domain.kz --name "Бас әкімші"
 ```
 
-(For local dev without Docker: `python create_super_admin.py --email ... --password ... --name ...`
-from inside `apps/backend` with the venv activated.)
+CLI дважды запросит пароль без отображения на экране. Минимум 12 символов. Пароль не передаётся аргументом командной строки. Других сотрудников можно добавить после входа в раздел «Қызметкерлер».
 
-Log into the dashboard at `http://localhost` (or your domain) with this email/password.
-Use the dashboard's **Қызметкерлер** page to create DISPATCHER/OPERATOR accounts afterwards.
+## 6. HTTPS и домен
 
-## 6. Running with Docker
+1. Направьте DNS A/AAAA вашего домена на сервер.
+2. Получите TLS-сертификат через ACME-клиент вашей инфраструктуры (например, Certbot с DNS challenge). Настройте автоматическое продление.
+3. Создайте `certs/` и поместите туда **реальные** `fullchain.pem` и `privkey.pem`. Закрытый ключ должен быть доступен только уполномоченным администраторам сервера.
+4. Укажите этот же origin в `ALLOWED_ORIGINS`.
+5. Nginx читает сертификаты из `certs/`, перенаправляет HTTP на HTTPS, включает HSTS и закрывает `/api/internal` снаружи.
 
-```bash
-docker compose up --build -d
-docker compose logs -f
+Для тестового домена можно использовать локально доверенный сертификат. Не отключайте проверку TLS в production. После продления сертификата обновите файлы в `certs/` и выполните `docker compose exec nginx nginx -s reload`.
+
+## 7. Запуск
+
+```sh
+docker compose up -d
+docker compose ps
+docker compose logs --tail=100 backend bot worker nginx
 ```
 
-Services:
-- `http://localhost` — admin dashboard (proxied through nginx)
-- `http://localhost/api` — backend REST API
-- The bot starts polling Telegram automatically once `BOT_TOKEN` is valid.
+Откройте `https://ваш-домен.kz`, войдите под созданным администратором. Проверьте «Баптаулар»: название, контактный и **подтверждённый** аварийный номер, тексты уведомлений, максимальный размер фото.
 
-Stop everything with `docker compose down` (add `-v` to also drop the database volume).
+Отправьте `/start` вашему боту и выполните по одной тестовой заявке каждого типа. Убедитесь, что аварийная заявка выделена и смена статуса доставляет уведомление в Telegram. Систему можно вводить в эксплуатацию после этой проверки на вашем токене и домене.
 
-## 7. Local development without Docker
+## 8. Структура
 
-**Backend:**
-```bash
-cd apps/backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+```text
+apps/
+  backend/
+    app/                 # models, schemas, services, repositories, api, auth,
+                         # database, storage, notifications, config, cli
+    migrations/          # зафиксированная начальная Alembic migration
+  telegram-bot/
+    bot/                 # handlers, keyboards, states, middlewares, services
+  admin-web/
+    src/app/             # Next.js App Router
+    src/components/      # страницы и UI
+    src/hooks/           # запросы с отменой
+    src/services/        # API/CSRF/download
+    src/types/           # TypeScript contract
+packages/shared/         # OpenAPI
+docker/                  # Dockerfiles, Nginx
+docs/                    # архитектура, проверки, эксплуатация
+tests/                   # unit/integration/FSM/concurrency
+.github/workflows/ci.yml # PostgreSQL + Redis + browser tests
 ```
 
-**Telegram bot:**
-```bash
-cd apps/telegram-bot
-pip install -r requirements.txt
-python -m bot.main
-```
+Логические слои backend и bot представлены отдельными Python-модулями; их можно развивать в пакеты без изменения границ API.
 
-**Admin dashboard:**
-```bash
+## 9. API и права
+
+Внешний префикс — `/api`: `POST /api/auth/login`, `GET /api/applications` и т. д. Все endpoints из ТЗ реализованы; добавлены `/auth/me`, `/auth/logout`, `/events`, `/files/{id}`, `/reports`, `/reports/export`, `/settings`, `/audit`, `/operations`.
+
+Вход возвращает `csrf_token`; cookie выставляется сервером. Для POST/PATCH нужен `X-CSRF-Token` и разрешённый `Origin`. Сессионный токен никогда не хранится в localStorage. Сессия действует 8 часов; logout и деактивация сотрудника отзывают её. Для изменения заявки передавайте её текущую `version`; при конфликте API отвечает `409`.
+
+OPERATOR видит только назначенные себе заявки, файлы, историю и отчёты. DISPATCHER работает со всеми заявками и назначает исполнителей. SUPER_ADMIN дополнительно управляет сотрудниками, настройками и повторной доставкой из dead-letter очереди.
+
+Полный контракт — `packages/shared/openapi.json`. В режиме разработки `/docs` backend показывает Swagger; в production интерактивная документация отключена.
+
+## 10. Тесты и локальная разработка
+
+Python 3.12+, Node.js 24. Версии Python-зависимостей зафиксированы в `requirements.lock` и `requirements-dev.lock`, npm — в `package-lock.json`.
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-dev.lock
+pytest -q
+ruff check apps tests scripts
 cd apps/admin-web
-npm install
-npm run dev
-```
-
-## 8. Running tests
-
-```bash
-# Backend (35 tests: auth, RBAC, application creation, FSM-adjacent validation,
-# file upload validation, status history, gas-leak critical priority)
-cd apps/backend
-pip install -r requirements.txt
-pytest
-
-# Telegram bot (validators, API client payload/error handling)
-cd apps/telegram-bot
-pip install -r requirements.txt
-pytest
-
-# Admin dashboard (type-check + production build)
-cd apps/admin-web
-npm install
+npm ci
 npm run build
 ```
 
-## 9. HTTPS / domain setup for production
+Без `TEST_DATABASE_URL` unit/integration тесты работают на изолированной SQLite, тесты блокировок пропускаются. Для проверки PostgreSQL задайте `TEST_DATABASE_URL` на **отдельную одноразовую БД**, имя которой содержит `test` или `e2e`: тесты пересоздают таблицы. Никогда не направляйте эту переменную на production.
 
-The bundled `docker/nginx/nginx.conf` ships with an HTTP server block and a commented-out
-HTTPS server block.
+Полный CI запускает тесты с PostgreSQL и Redis, применяет Alembic, создаёт только E2E-администратора в тестовой БД, собирает Next.js и выполняет `npm run test:e2e`. Браузерный тест создаёт заявки через API; подмена ответов API не используется.
 
-1. Point your domain's DNS `A` record at the server running this stack.
-2. Obtain a certificate, e.g. with [certbot](https://certbot.eff.org/) in standalone mode:
-   ```bash
-   docker compose stop nginx
-   certbot certonly --standalone -d your-domain.example
-   cp /etc/letsencrypt/live/your-domain.example/fullchain.pem docker/nginx/certs/
-   cp /etc/letsencrypt/live/your-domain.example/privkey.pem docker/nginx/certs/
-   ```
-3. Uncomment the HTTPS `server` block in `docker/nginx/nginx.conf`, set `server_name` to your
-   domain, and update `CORS_ORIGINS` / `NEXT_PUBLIC_API_BASE_URL` in `.env` if the dashboard is
-   served from a different origin than the API.
-4. `docker compose up -d --force-recreate nginx`.
-5. Set up certificate renewal (`certbot renew`) via cron or a systemd timer.
+Для разработки без контейнеров:
 
-## 10. Production deployment checklist
+- Укажите локальные PostgreSQL/Redis URL, `ENVIRONMENT=development`, `COOKIE_SECURE=false`, `ALLOWED_ORIGINS=http://127.0.0.1:3000`, абсолютный `UPLOAD_DIR`.
+- Из `apps/backend`: `alembic upgrade head`, затем `uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+- Из `apps/admin-web`: `npm run dev`. Next.js проксирует `/api` на `127.0.0.1:8000`. `INTERNAL_API_URL` меняет адрес прокси; для production build задаётся до сборки.
+- Из `apps/telegram-bot`: `python -m bot.main` с `BACKEND_URL=http://127.0.0.1:8000/api/internal` и Redis DB 1.
+- Из `apps/backend` отдельным процессом: `python -m app.notifications` с `BOT_TOKEN`.
 
-- [ ] Strong, unique `SECRET_KEY`, `BOT_INTERNAL_API_KEY`, and `POSTGRES_PASSWORD` (never reuse
-      the example values).
-- [ ] `.env` is **not** committed to Git (already covered by `.gitignore`).
-- [ ] `CORS_ORIGINS` restricted to your real dashboard domain(s).
-- [ ] HTTPS enabled (section 9) — the JWT bearer token and admin credentials must not travel
-      over plain HTTP in production.
-- [ ] Database volume (`postgres_data`) included in your backup strategy.
-- [ ] `uploads_data` volume (resident photos) included in your backup strategy.
-- [ ] Telegram bot's emergency phone number and organization contact set correctly under
-      **Баптаулар** (Settings) before go-live — these are shown to residents reporting gas leaks.
-- [ ] Consider a process supervisor / restart policy for the `bot` service beyond Docker's
-      `restart: unless-stopped` if you need alerting on crashes.
+В Windows с ограничением дочерних процессов для `next build` можно задать `NEXT_WORKER_THREADS=true`. Проверка типов при этом остаётся включённой.
 
-## Project structure
+## 11. Production deployment
 
-```
-/apps
-  /backend        FastAPI service (models, schemas, repositories, services, api, auth)
-  /telegram-bot   aiogram 3 bot (handlers, keyboards, states, middlewares, services)
-  /admin-web      Next.js admin dashboard (app router, components, lib)
-/docker
-  /nginx          Reverse proxy config + TLS certs (not committed)
-/docs             Additional documentation
-docker-compose.yml
-.env.example
-```
+Подготовьте секреты, домен и TLS; выполните миграции и создайте администратора; поднимите Compose; выполните приёмочные сценарии Telegram → панель → уведомление. Настройте резервные копии БД и фото, мониторинг health endpoints и очереди, ротацию логов, срок хранения персональных данных. См. [runbook](docs/operations.md).
 
-## Notes on design decisions
+**Границы текущей реализации:** `verify_personal_account` проверяет только формат 6–20 цифр, не существование абонента. Хранилище фотографий — приватный volume для одного Docker-хоста. При нескольких хостах нужен общий private object storage. Telegram доставка — at-least-once, поэтому после редкого сбоя между отправкой и commit возможен повтор уведомления. Правила повторного открытия закрытых заявок не введены: COMPLETED/REJECTED являются конечными статусами.
 
-- **Application numbers** use the format `REQ-YYYYMMDD-#####` where the numeric suffix is the
-  application's database id (zero-padded), guaranteeing uniqueness without a race-prone
-  per-day counter.
-- **Personal account verification** (`verify_personal_account` in
-  `apps/backend/app/services/validators.py`) currently checks format only. It is isolated in
-  its own function specifically so a real subscriber-database/API check can be plugged in
-  later without touching call sites.
-- **Photo storage**: the bot never downloads files itself — it passes Telegram `file_id`s to
-  the backend, which downloads, validates (magic bytes + Pillow decode + size/MIME
-  allow-list), and stores them. This keeps all file handling and validation in one place.
-- **Real-time updates** go through Redis pub/sub → WebSocket, so the dashboard stays in sync
-  even when running multiple backend replicas.
+Живой Telegram-токен и TLS-домен не входят в поставку. Фактически выполненные проверки и ограничения среды перечислены в [verification.md](docs/verification.md).

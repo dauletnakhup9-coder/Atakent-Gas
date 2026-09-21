@@ -1,0 +1,6 @@
+-r apps/backend/requirements.txt
+-r apps/telegram-bot/requirements.txt
+pytest>=8.3,<10
+pytest-asyncio>=0.25,<2
+aiosqlite>=0.21,<1
+ruff>=0.9,<1
