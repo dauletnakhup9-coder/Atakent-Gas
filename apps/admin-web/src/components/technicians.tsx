@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { MapPin, Plus } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { api, downloadSealInstallationsExport } from "@/services/api";
 import { useAuth } from "./auth-provider";
@@ -107,8 +107,8 @@ export function Technicians({ revision }: { revision: number }) {
               <td>{s.created_at.slice(0, 16).replace("T", " ")}</td><td>{s.technician_name}</td>
               <td className="mono">{s.account_number}</td><td>{s.meter_number}</td><td>{s.seal_number}</td>
               <td>{s.reading_value}</td>
-              <td><a href={`https://www.google.com/maps?q=${s.latitude},${s.longitude}`} target="_blank" rel="noreferrer">
-                {s.latitude.toFixed(5)}, {s.longitude.toFixed(5)}</a></td>
+              <td><a className="map-link" href={`https://www.google.com/maps?q=${s.latitude},${s.longitude}`}
+                target="_blank" rel="noreferrer"><MapPin size={13} /> {s.latitude.toFixed(5)}, {s.longitude.toFixed(5)}</a></td>
               <td><Button size="sm" variant="ghost" onClick={() => setPhoto(s)}>Фото</Button></td>
             </tr>)}
           </tbody></table></div>

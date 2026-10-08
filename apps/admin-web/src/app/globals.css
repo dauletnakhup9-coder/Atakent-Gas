@@ -902,6 +902,18 @@ tbody tr:hover {
   color: var(--green);
   text-decoration: underline;
 }
+.map-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #365e4b;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.map-link:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
 .table-sub {
   font-size: 9px;
   color: #a2afa6;
