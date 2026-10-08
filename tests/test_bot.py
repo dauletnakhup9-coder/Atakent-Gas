@@ -10,7 +10,7 @@ from aiogram.methods import SendMessage
 from aiogram.types import CallbackQuery, Chat, Location, Message, PhotoSize, Update, User
 from bot.handlers import router, today, valid_date
 from bot.services import APIError, BoundedBuffer
-from bot.states import Flow
+from bot.states import Flow, TechFlow
 
 dispatcher = Dispatcher(storage=MemoryStorage())
 dispatcher.include_router(router)
@@ -54,6 +54,7 @@ class Harness:
             return {"verified": True, "account": {"id": 1, "account_number": identifier, "meter_number": "TEST-1",
                      "full_name": "Test resident", "address": "Test address"}}
         self.api.account.side_effect = account_lookup
+        self.api.technician.return_value = {"active": False, "full_name": None}
         self.api.settings.return_value = {"emergency_phone": "", "max_photo_mb": 10}
         self.api.upload.side_effect = [
             {"id": "11111111-1111-4111-8111-111111111111"},
@@ -235,6 +236,49 @@ async def test_reading_flow_requires_photo_and_confirms(h):
     assert h.api.reading.call_args.args[0]["photo_id"] == "11111111-1111-4111-8111-111111111111"
     assert h.api.reading.call_args.args[0]["telegram_user_id"] == 123456
     assert await h.context.get_state() is None
+
+
+async def test_technician_start_shows_tech_menu_not_resident_flow(h):
+    h.api.technician.return_value = {"active": True, "full_name": "Test technician"}
+    await h.message("/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
+    assert await h.context.get_state() is None
+    assert "Test technician" in h.session.messages[-1].text
+    h.api.account.assert_not_awaited()
+
+
+async def test_seal_installation_flow_rejects_bad_meter_number_then_submits(h):
+    h.api.technician.return_value = {"active": True, "full_name": "Test technician"}
+    h.api.seal_installation.return_value = {"id": "seal-1"}
+    await h.message("🔧 Пломба орнату")
+    assert await h.context.get_state() == TechFlow.ACCOUNT_NUMBER.state
+    await h.message("00123456")
+    assert await h.context.get_state() == TechFlow.METER_NUMBER.state
+    await h.message("!!")
+    assert await h.context.get_state() == TechFlow.METER_NUMBER.state
+    await h.message("m-000123")
+    assert await h.context.get_state() == TechFlow.CONFIRM_NUMBERS.state
+    assert (await h.context.get_data())["seal_meter_number"] == "M-000123"
+    await h.click("seal:edit")
+    assert await h.context.get_state() == TechFlow.ACCOUNT_NUMBER.state
+    await h.message("00123456")
+    await h.message("M-000123")
+    await h.click("seal:yes")
+    assert await h.context.get_state() == TechFlow.READING_VALUE.state
+    await h.message("120.500")
+    assert await h.context.get_state() == TechFlow.SEAL_NUMBER.state
+    await h.message("S-000999")
+    assert await h.context.get_state() == TechFlow.PHOTO.state
+    await h.message(photo=[PhotoSize(file_id="seal", file_unique_id="seal-photo", width=20, height=20)])
+    assert await h.context.get_state() == TechFlow.LOCATION.state
+    h.api.seal_installation.assert_not_awaited()
+    await h.message(location=Location(latitude=44.8, longitude=65.5))
+    assert await h.context.get_state() == TechFlow.CONFIRM_SUBMIT.state
+    await h.click("seal:submit")
+    payload = h.api.seal_installation.call_args.args[0]
+    assert payload["account_number"] == "00123456" and payload["seal_number"] == "S-000999"
+    assert payload["latitude"] == 44.8 and payload["longitude"] == 65.5
+    assert await h.context.get_state() is None
+    assert "тіркелді" in h.session.messages[-1].text
 
 
 async def test_unfound_account_emergency_still_available(h):

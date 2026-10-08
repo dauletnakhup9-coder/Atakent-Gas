@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.api import router
 from app.subscribers import router as subscriber_router, internal as subscriber_internal
+from app.technicians import router as technician_router, internal as technician_internal
 from app.auth import redis
 from app.config import get_settings
 from app.database import Session, engine, utcnow
@@ -332,3 +333,5 @@ app.include_router(
 )
 app.include_router(subscriber_router)
 app.include_router(subscriber_internal)
+app.include_router(technician_router)
+app.include_router(technician_internal)

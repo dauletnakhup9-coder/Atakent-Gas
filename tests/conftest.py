@@ -62,6 +62,7 @@ async def client(db, monkeypatch):
     monkeypatch.setattr("app.auth.rate_limit", AsyncMock())
     monkeypatch.setattr("app.api.rate_limit", AsyncMock())
     monkeypatch.setattr("app.subscribers.rate_limit", AsyncMock())
+    monkeypatch.setattr("app.technicians.rate_limit", AsyncMock())
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", headers={"Origin": "http://test"}
     ) as client:

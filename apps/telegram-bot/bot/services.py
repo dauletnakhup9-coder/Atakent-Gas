@@ -73,3 +73,9 @@ class Backend:
 
     async def application(self, user_id, application_id):
         return await self.request("GET", f"users/{user_id}/applications/{application_id}")
+
+    async def technician(self, telegram_user_id):
+        return await self.request("GET", f"technicians/{telegram_user_id}")
+
+    async def seal_installation(self, payload):
+        return await self.request("POST", "technicians/seal-installations", json=payload)

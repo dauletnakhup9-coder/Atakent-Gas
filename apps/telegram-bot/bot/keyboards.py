@@ -10,6 +10,10 @@ MAIN = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
+TECH_MAIN = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="🔧 Пломба орнату")]],
+    resize_keyboard=True,
+)
 CONTROLS = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="⬅️ Артқа"), KeyboardButton(text="❌ Бас тарту")]], resize_keyboard=True
 )

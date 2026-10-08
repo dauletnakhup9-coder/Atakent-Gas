@@ -19,6 +19,17 @@ class Flow(StatesGroup):
     READING_CONFIRM = State()
 
 
+class TechFlow(StatesGroup):
+    ACCOUNT_NUMBER = State()
+    METER_NUMBER = State()
+    CONFIRM_NUMBERS = State()
+    READING_VALUE = State()
+    SEAL_NUMBER = State()
+    PHOTO = State()
+    LOCATION = State()
+    CONFIRM_SUBMIT = State()
+
+
 BACK = {
     Flow.ACCOUNT_NOT_FOUND.state: Flow.WAITING_ACCOUNT,
     Flow.READING_PHOTO.state: Flow.SELECT_APPLICATION_TYPE,
@@ -34,6 +45,13 @@ BACK = {
     Flow.GAS_WAITING_LEAK_PHOTO.state: Flow.GAS_WAITING_METER_PHOTO,
     Flow.GAS_WAITING_LOCATION.state: Flow.GAS_WAITING_LEAK_PHOTO,
     Flow.GAS_CONFIRM.state: Flow.GAS_WAITING_LOCATION,
+    TechFlow.METER_NUMBER.state: TechFlow.ACCOUNT_NUMBER,
+    TechFlow.CONFIRM_NUMBERS.state: TechFlow.METER_NUMBER,
+    TechFlow.READING_VALUE.state: TechFlow.CONFIRM_NUMBERS,
+    TechFlow.SEAL_NUMBER.state: TechFlow.READING_VALUE,
+    TechFlow.PHOTO.state: TechFlow.SEAL_NUMBER,
+    TechFlow.LOCATION.state: TechFlow.PHOTO,
+    TechFlow.CONFIRM_SUBMIT.state: TechFlow.LOCATION,
 }
 TYPE_LABELS = {
     "METER_NOT_WORKING": "Счетчик жұмыс жасамайды",

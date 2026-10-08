@@ -99,6 +99,21 @@ export async function importSubscribers(file: File): Promise<ImportResult> {
   }
   return body;
 }
+export async function downloadSealInstallationsExport(format: "csv" | "xlsx") {
+  const response = await fetch(`/api/technicians/seal-installations/export?format=${format}`, {
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || "Экспорт орындалмады");
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `plomba.${format}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 export async function downloadReport(query: string, format: "csv" | "xlsx") {
   const response = await fetch(
     `/api/reports/export?${query}&format=${format}`,

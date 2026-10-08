@@ -6,11 +6,17 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from bot.keyboards import ACCOUNT_HELP, CONTROLS, LOCATION, MAIN, date_keyboard, inline
+from bot.keyboards import ACCOUNT_HELP, CONTROLS, LOCATION, MAIN, TECH_MAIN, date_keyboard, inline
 from bot.services import Backend
-from bot.states import BACK, STATUS_LABELS, TYPE_LABELS, Flow
+from bot.states import BACK, STATUS_LABELS, TYPE_LABELS, Flow, TechFlow
 
 router = Router()
+
+TECH_STATE_SET = {
+    TechFlow.ACCOUNT_NUMBER.state, TechFlow.METER_NUMBER.state, TechFlow.CONFIRM_NUMBERS.state,
+    TechFlow.READING_VALUE.state, TechFlow.SEAL_NUMBER.state, TechFlow.PHOTO.state,
+    TechFlow.LOCATION.state, TechFlow.CONFIRM_SUBMIT.state,
+}
 
 
 def today(timezone="Asia/Qyzylorda"):
@@ -94,8 +100,12 @@ async def prompt(message: Message, state: FSMContext, backend: Backend, timezone
 @router.message(CommandStart())
 @router.message(Command("new"))
 @router.message(F.text == "📝 Өтінім қалдыру")
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, backend: Backend):
+    tech = await backend.technician(message.from_user.id)
     await state.clear()
+    if tech.get("active"):
+        await message.answer(f"Қош келдіңіз, {tech['full_name']}!\nТехник мәзірі.", reply_markup=TECH_MAIN)
+        return
     await state.set_state(Flow.WAITING_ACCOUNT)
     await state.update_data(idempotency_key=str(uuid.uuid4()), telegram_user_id=message.from_user.id)
     sent = await message.answer(
@@ -106,24 +116,33 @@ async def start(message: Message, state: FSMContext):
     await state.update_data(active_message_id=sent.message_id)
 
 
-async def cancel(message, state):
+async def cancel(message, state, backend):
+    tech = await backend.technician(message.chat.id)
     await state.clear()
-    await message.answer("Өтінімнен бас тартылды.", reply_markup=MAIN)
+    await message.answer("Бас тартылды.", reply_markup=TECH_MAIN if tech.get("active") else MAIN)
 
 
 @router.message(Command("cancel"))
 @router.message(F.text == "❌ Бас тарту")
-async def cancel_message(message: Message, state: FSMContext):
-    await cancel(message, state)
+async def cancel_message(message: Message, state: FSMContext, backend: Backend):
+    await cancel(message, state, backend)
+
+
+async def render(message, state, backend, timezone):
+    current = await state.get_state()
+    if current in TECH_STATE_SET:
+        await seal_prompt(message, state, backend, timezone)
+    else:
+        await prompt(message, state, backend, timezone)
 
 
 async def go_back(message, state, backend, timezone):
     current = await state.get_state()
     if current not in BACK:
-        await cancel(message, state)
+        await cancel(message, state, backend)
         return
     await state.set_state(BACK[current])
-    await prompt(message, state, backend, timezone)
+    await render(message, state, backend, timezone)
 
 
 @router.message(F.text == "⬅️ Артқа")
@@ -132,9 +151,10 @@ async def back_message(message: Message, state: FSMContext, backend: Backend, ti
 
 
 @router.message(Command("menu"))
-async def menu(message: Message, state: FSMContext):
+async def menu(message: Message, state: FSMContext, backend: Backend):
+    tech = await backend.technician(message.from_user.id)
     await state.clear()
-    await message.answer("Басты мәзір", reply_markup=MAIN)
+    await message.answer("Басты мәзір", reply_markup=TECH_MAIN if tech.get("active") else MAIN)
 
 
 @router.message(F.text == "☎️ Байланыс")
@@ -295,6 +315,110 @@ async def location(message: Message, state: FSMContext, backend: Backend, timezo
     await prompt(message, state, backend, timezone)
 
 
+async def seal_prompt(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    current, data = await state.get_state(), await state.get_data()
+    markup = CONTROLS
+    if current == TechFlow.ACCOUNT_NUMBER.state:
+        text = "Дербес шот нөмірін енгізіңіз:"
+    elif current == TechFlow.METER_NUMBER.state:
+        text = "Есептегіш нөмірін енгізіңіз:"
+    elif current == TechFlow.CONFIRM_NUMBERS.state:
+        text = (f"Дербес шот: {data['seal_account_number']}\nЕсептегіш нөмірі: {data['seal_meter_number']}\n\n"
+                "Деректер дұрыс па?")
+        markup = inline([[("✅ Дұрыс", "seal:yes"), ("✏️ Қайта енгізу", "seal:edit")]])
+    elif current == TechFlow.READING_VALUE.state:
+        text = "Есептегіштің ағымдағы көрсеткішін жазыңыз (мысалы: 1234.567):"
+    elif current == TechFlow.SEAL_NUMBER.state:
+        text = "Орнатылатын пломба нөмірін жазыңыз:"
+    elif current == TechFlow.PHOTO.state:
+        text = "Есептегіш пен орнатылған пломбаның суретін жіберіңіз."
+    elif current == TechFlow.LOCATION.state:
+        text, markup = "Геолокацияны жіберіңіз.", LOCATION
+    else:
+        text = (f"Дербес шот: {data['seal_account_number']}\nЕсептегіш нөмірі: {data['seal_meter_number']}\n"
+                f"Көрсеткіш: {data['seal_reading_value']}\nПломба нөмірі: {data['seal_number']}\n"
+                "Фото: ✅\nГеолокация: ✅\n\nЖіберу керек пе?")
+        markup = inline([[("✅ Жіберу", "seal:submit"), ("✏️ Қайта бастау", "seal:restart")]])
+    sent = await message.answer(text, reply_markup=markup)
+    await state.update_data(active_message_id=sent.message_id)
+
+
+@router.message(F.text == "🔧 Пломба орнату")
+async def seal_start(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    tech = await backend.technician(message.from_user.id)
+    if not tech.get("active"):
+        return
+    await state.clear()
+    await state.update_data(telegram_user_id=message.from_user.id, idempotency_key=str(uuid.uuid4()))
+    await state.set_state(TechFlow.ACCOUNT_NUMBER)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.ACCOUNT_NUMBER, F.text, ~F.text.startswith("/"))
+async def seal_account_number(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    value = message.text.strip()
+    if not re.fullmatch(r"[0-9]{6,20}", value):
+        await message.answer("Дербес шот 6–20 цифрдан тұруы керек. Қайта енгізіңіз:")
+        return
+    await state.update_data(seal_account_number=value)
+    await state.set_state(TechFlow.METER_NUMBER)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.METER_NUMBER, F.text, ~F.text.startswith("/"))
+async def seal_meter_number(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    value = message.text.strip().upper()
+    if not re.fullmatch(r"[A-Za-z0-9-]{3,40}", value):
+        await message.answer("Есептегіш нөмірі 3–40 таңбадан, тек әріп/сан/дефис болуы керек. Қайта енгізіңіз:")
+        return
+    await state.update_data(seal_meter_number=value)
+    await state.set_state(TechFlow.CONFIRM_NUMBERS)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.READING_VALUE, F.text, ~F.text.startswith("/"))
+async def seal_reading_value(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    value = message.text.strip().replace(",", ".")
+    if not re.fullmatch(r"[0-9]{1,11}(\.[0-9]{1,3})?", value):
+        await message.answer("Көрсеткішті дұрыс санмен жазыңыз (мысалы: 1234.567). Қайта енгізіңіз:")
+        return
+    await state.update_data(seal_reading_value=value)
+    await state.set_state(TechFlow.SEAL_NUMBER)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.SEAL_NUMBER, F.text, ~F.text.startswith("/"))
+async def seal_number_value(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    value = message.text.strip().upper()
+    if not re.fullmatch(r"[A-Za-z0-9-]{3,40}", value):
+        await message.answer("Пломба нөмірі 3–40 таңбадан, тек әріп/сан/дефис болуы керек. Қайта енгізіңіз:")
+        return
+    await state.update_data(seal_number=value)
+    await state.set_state(TechFlow.PHOTO)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.PHOTO, F.photo)
+async def seal_photo(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    image = message.photo[-1]
+    file = await backend.upload(message.bot, message.from_user.id, image, "SEAL_PHOTO")
+    await state.update_data(seal_photo_id=file["id"])
+    await state.set_state(TechFlow.LOCATION)
+    await seal_prompt(message, state, backend, timezone)
+
+
+@router.message(TechFlow.LOCATION, F.location)
+async def seal_location(message: Message, state: FSMContext, backend: Backend, timezone: str):
+    latitude, longitude = message.location.latitude, message.location.longitude
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        await message.answer("Геолокация дұрыс емес. Қайта жіберіңіз.")
+        return
+    await state.update_data(seal_latitude=latitude, seal_longitude=longitude)
+    await state.set_state(TechFlow.CONFIRM_SUBMIT)
+    await message.answer("Геолокация қабылданды.", reply_markup=CONTROLS)
+    await seal_prompt(message, state, backend, timezone)
+
+
 @router.callback_query()
 async def callback(callback: CallbackQuery, state: FSMContext, backend: Backend, timezone: str):
     current, data = await state.get_state(), await state.get_data()
@@ -310,7 +434,7 @@ async def callback(callback: CallbackQuery, state: FSMContext, backend: Backend,
     if action == "noop":
         return
     if action == "cancel":
-        await cancel(callback.message, state)
+        await cancel(callback.message, state, backend)
         return
     if action == "back":
         await go_back(callback.message, state, backend, timezone)
@@ -423,28 +547,57 @@ async def callback(callback: CallbackQuery, state: FSMContext, backend: Backend,
             return
         else:
             return
+    elif current == TechFlow.CONFIRM_NUMBERS.state:
+        if action == "seal:edit":
+            await state.set_state(TechFlow.ACCOUNT_NUMBER)
+        elif action == "seal:yes":
+            await state.set_state(TechFlow.READING_VALUE)
+        else:
+            return
+    elif current == TechFlow.CONFIRM_SUBMIT.state:
+        if action == "seal:restart":
+            await state.set_state(TechFlow.ACCOUNT_NUMBER)
+        elif action == "seal:submit":
+            await backend.seal_installation({
+                "telegram_user_id": callback.from_user.id,
+                "idempotency_key": data["idempotency_key"],
+                "account_number": data["seal_account_number"],
+                "meter_number": data["seal_meter_number"],
+                "reading_value": data["seal_reading_value"],
+                "seal_number": data["seal_number"],
+                "photo_id": data["seal_photo_id"],
+                "latitude": data["seal_latitude"],
+                "longitude": data["seal_longitude"],
+            })
+            await state.clear()
+            await callback.message.answer("✅ Пломба орнату деректері тіркелді.", reply_markup=TECH_MAIN)
+            return
+        else:
+            return
     else:
         return
-    await prompt(callback.message, state, backend, timezone)
+    await render(callback.message, state, backend, timezone)
 
 
 @router.message()
-async def fallback(message: Message, state: FSMContext):
+async def fallback(message: Message, state: FSMContext, backend: Backend):
     current = await state.get_state()
     if current in {
         Flow.METER_WAITING_PHOTO.state,
         Flow.GAS_WAITING_METER_PHOTO.state,
         Flow.GAS_WAITING_LEAK_PHOTO.state,
         Flow.READING_PHOTO.state,
+        TechFlow.PHOTO.state,
     }:
         await message.answer(
             "Фотосуретті «Фото» ретінде жіберіңіз. Құжат немесе мәтін қабылданбайды.", reply_markup=CONTROLS
         )
-    elif current in {Flow.METER_WAITING_LOCATION.state, Flow.GAS_WAITING_LOCATION.state}:
+    elif current in {Flow.METER_WAITING_LOCATION.state, Flow.GAS_WAITING_LOCATION.state, TechFlow.LOCATION.state}:
         await message.answer("📍 Геолокацияны жіберу батырмасын басыңыз.", reply_markup=LOCATION)
     elif current == Flow.ACCOUNT_NOT_FOUND.state:
         await message.answer("Дербес шот нөмірін қайта енгізу үшін ⬅️ Артқа батырмасын басыңыз.", reply_markup=ACCOUNT_HELP)
     elif current:
         await message.answer("Соңғы хабарламадағы батырманы пайдаланыңыз. ⬅️ Артқа немесе ❌ Бас тарту қолжетімді.")
     else:
-        await message.answer("Басты мәзір", reply_markup=MAIN)
+        tech = await backend.technician(message.from_user.id)
+        await message.answer("Басты мәзір", reply_markup=TECH_MAIN if tech.get("active") else MAIN)

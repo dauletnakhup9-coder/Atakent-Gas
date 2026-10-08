@@ -5,6 +5,7 @@ from app.config import get_settings
 from app.database import Base
 from app import models  # noqa: F401
 from app import subscriber_models  # noqa: F401
+from app import technician_models  # noqa: F401
 
 
 def run_sync(connection):

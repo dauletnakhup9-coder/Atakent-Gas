@@ -15,6 +15,7 @@ import {
   Search,
   Settings2,
   UsersRound,
+  Wrench,
   X,
 } from "lucide-react";
 import { useAuth } from "./auth-provider";
@@ -27,6 +28,7 @@ import { ApplicationDetail } from "./application-detail";
 import { Reports } from "./reports";
 import { Staff } from "./staff";
 import { Subscribers } from "./subscribers";
+import { Technicians } from "./technicians";
 import { Settings } from "./settings";
 import { Empty, Loading } from "./common";
 const links = [
@@ -35,6 +37,7 @@ const links = [
   { href: "/emergencies", label: "Авариялық өтінімдер", icon: CircleAlert },
   { href: "/staff", label: "Қызметкерлер", icon: UsersRound },
   { href: "/subscribers", label: "Абоненттер", icon: UsersRound },
+  { href: "/technicians", label: "Пломбалар", icon: Wrench },
   { href: "/reports", label: "Есептер", icon: FileChartColumn },
   { href: "/settings", label: "Баптаулар", icon: Settings2 },
 ];
@@ -138,7 +141,7 @@ export function Workspace() {
         </div>
         <span className="nav-heading">НЕГІЗГІ МӘЗІР</span>
         <nav>
-          {links.filter((link) => link.href !== "/subscribers" || admin.role === "SUPER_ADMIN").map(({ href, label, icon: Icon }) => (
+          {links.filter((link) => !["/subscribers", "/technicians"].includes(link.href) || admin.role === "SUPER_ADMIN").map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
               href={href}
@@ -299,6 +302,8 @@ export function Workspace() {
             <Staff revision={revision} />
           ) : path === "/subscribers" ? (
             <Subscribers revision={revision} />
+          ) : path === "/technicians" ? (
+            <Technicians revision={revision} />
           ) : path === "/settings" ? (
             <Settings revision={revision} />
           ) : (
