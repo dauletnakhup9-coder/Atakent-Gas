@@ -1,0 +1,50 @@
+▲ Next.js 16.3.5 (webpack)
+- Local:         http://127.0.0.1:58102
+- Network:       http://127.0.0.1:58102
+✓ Ready in 941ms
+✓ Running next.config.ts took 96ms
+- Experiments (use with caution):
+  · cpus: 2
+  ⨯ useTypeScriptCli
+
+○ Compiling /login ...
+ GET /login 200 in 7.0s (next.js: 6.8s, application-code: 233ms)
+ GET /login 200 in 67ms (next.js: 11ms, application-code: 56ms)
+ GET / 200 in 3.6s (next.js: 3.5s, application-code: 82ms)
+ GET /favicon.ico 200 in 4.4s (next.js: 4.1s, application-code: 257ms)
+ GET / 200 in 41ms (next.js: 15ms, application-code: 26ms)
+ GET /favicon.ico 200 in 52ms (next.js: 6ms, application-code: 46ms)
+ GET /subscribers 200 in 59ms (next.js: 11ms, application-code: 48ms)
+ GET /favicon.ico 200 in 81ms (next.js: 10ms, application-code: 71ms)
+ GET /login 200 in 83ms (next.js: 9ms, application-code: 74ms)
+ GET /favicon.ico 200 in 80ms (next.js: 22ms, application-code: 58ms)
+ GET / 200 in 53ms (next.js: 12ms, application-code: 41ms)
+ GET /favicon.ico 200 in 119ms (next.js: 18ms, application-code: 101ms)
+ GET /applications/1 200 in 112ms (next.js: 22ms, application-code: 91ms)
+ GET /favicon.ico 200 in 186ms (next.js: 15ms, application-code: 171ms)
+ GET /login 200 in 61ms (next.js: 8ms, application-code: 53ms)
+ GET /favicon.ico 200 in 58ms (next.js: 19ms, application-code: 39ms)
+ GET / 200 in 37ms (next.js: 9ms, application-code: 28ms)
+ GET /favicon.ico 200 in 55ms (next.js: 6ms, application-code: 49ms)
+ GET /subscribers 200 in 43ms (next.js: 16ms, application-code: 27ms)
+ GET /favicon.ico 200 in 71ms (next.js: 8ms, application-code: 62ms)
+ GET /login 200 in 52ms (next.js: 7ms, application-code: 45ms)
+ GET /favicon.ico 200 in 59ms (next.js: 15ms, application-code: 43ms)
+ GET / 200 in 28ms (next.js: 6ms, application-code: 23ms)
+ GET /favicon.ico 200 in 45ms (next.js: 4ms, application-code: 41ms)
+ GET /applications/2 200 in 51ms (next.js: 12ms, application-code: 39ms)
+ GET /favicon.ico 200 in 106ms (next.js: 15ms, application-code: 91ms)
+ GET /applications 200 in 74ms (next.js: 20ms, application-code: 55ms)
+ GET /favicon.ico 200 in 123ms (next.js: 22ms, application-code: 101ms)
+ GET /reports 200 in 52ms (next.js: 9ms, application-code: 44ms)
+ GET /favicon.ico 200 in 206ms (next.js: 45ms, application-code: 162ms)
+ GET /settings 200 in 51ms (next.js: 6ms, application-code: 45ms)
+ GET /favicon.ico 200 in 99ms (next.js: 21ms, application-code: 78ms)
+ GET / 200 in 55ms (next.js: 9ms, application-code: 46ms)
+ GET /favicon.ico 200 in 126ms (next.js: 29ms, application-code: 97ms)
+ GET /login 200 in 58ms (next.js: 8ms, application-code: 50ms)
+ GET /favicon.ico 200 in 61ms (next.js: 13ms, application-code: 47ms)
+ GET / 200 in 32ms (next.js: 6ms, application-code: 26ms)
+ GET /favicon.ico 200 in 60ms (next.js: 6ms, application-code: 54ms)
+ GET /subscribers 200 in 41ms (next.js: 15ms, application-code: 26ms)
+ GET /favicon.ico 200 in 65ms (next.js: 7ms, application-code: 58ms)
